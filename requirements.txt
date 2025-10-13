@@ -1,0 +1,11 @@
+openai
+fastapi
+"uvicorn[standard]"
+pydantic
+langchain
+langchain-community
+sentence-transformers
+chromadb
+dotenv
+unstructured
+langchain-huggingface

@@ -1,0 +1,51 @@
+# 1. Environment Variables
+.env
+
+
+# 2. Python Cache & Compiled Files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+
+# 3. Virtual Environments
+venv/
+.venv/
+env/
+.env/
+virtualenv/
+
+
+# 4. IDE & Editor Configuration
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+
+# 5. Build, Distribution & Packaging Artifacts
+build/
+dist/
+sdist/
+*.egg-info/
+*.egg
+
+
+# 6. Testing Artifacts
+.pytest_cache/
+.tox/
+htmlcov/
+coverage.xml
+
+
+# 7. Logs and Databases
+*.log
+*.db
+*.sqlite3
+
+
+# 8. OS-specific Files
+.DS_Store          # macOS
+Thumbs.db          # Windows
+._* # macOS
