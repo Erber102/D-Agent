@@ -17,11 +17,34 @@ load_dotenv()
 class SmartAgent:
     def __init__(self, agent_id="smart_agent_001", tools_package_path="tools"):
         self.agent_id = agent_id
-        
-        openai_api_key = os.getenv("OPENAI_API_KEY")
-        if not openai_api_key:
-            raise ValueError("OPENAI_API_KEY 未在 .env 文件中设置！")
-        self.client = OpenAI(api_key=openai_api_key)
+        provider = os.getenv("LLM_PROVIDER", "openai").lower() # 默认为 openai，并转为小写
+
+        if provider == "openai":
+            print("Initializing agent with OpenAI...")
+            api_key = os.getenv("OPENAI_API_KEY")
+            if not api_key:
+                raise ValueError("LLM_PROVIDER is 'openai', but OPENAI_API_KEY is not set!")
+            
+            self.model_name = "gpt-4o" # 或者从 .env 读取
+            self.client = OpenAI(api_key=api_key)
+
+        elif provider == "deepseek":
+            print("Initializing agent with DeepSeek...")
+            api_key = os.getenv("DEEPSEEK_API_KEY")
+            if not api_key:
+                raise ValueError("LLM_PROVIDER is 'deepseek', but DEEPSEEK_API_KEY is not set!")
+
+            self.model_name = "deepseek-chat" # 或者从 .env 读取
+            self.client = OpenAI(
+                api_key=api_key,
+                base_url="https://api.deepseek.com"
+            )
+            
+        else:
+            # 如果用户在 .env 里写了不支持的 provider，就报错
+            raise ValueError(f"Unsupported LLM provider '{provider}' configured in .env file.")
+
+        print(f"Agent '{self.agent_id}' is online, powered by {provider.capitalize()} model '{self.model_name}'.")
 
         # self.tools 现在只包含“可选工具”
         self.tools: Dict[str, BaseTool] = {}
@@ -29,7 +52,6 @@ class SmartAgent:
         self.rag_tool: Optional[RAGTool] = None
         self._load_and_register_tools(tools_package_path)
         
-        print(f"Agent '{self.agent_id}' is online.")
         print(f"  - Automatic RAG tool loaded: {'Yes' if self.rag_tool else 'No'}")
         print(f"  - Selectable tools loaded: {list(self.tools.keys())}")
 
@@ -56,7 +78,7 @@ class SmartAgent:
 
     def handle_message(self, incoming_message: MCPMessage):
         """
-        新的核心流程：检索 -> 思考 -> 行动
+        核心流程：检索 -> 思考 -> 行动
         """
         print(f"\n[{self.agent_id}] --- New Task Received ---")
         
@@ -140,7 +162,7 @@ class SmartAgent:
 
         try:
             response = self.client.chat.completions.create(
-                model="gpt-4o",
+                model=self.model_name,
                 messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_request}],
                 response_format={"type": "json_object"}
             )

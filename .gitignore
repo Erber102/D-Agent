@@ -49,3 +49,6 @@ coverage.xml
 .DS_Store          # macOS
 Thumbs.db          # Windows
 ._* # macOS
+
+# 9. temp_dir
+/rag_db

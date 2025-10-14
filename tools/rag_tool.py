@@ -1,6 +1,7 @@
 # tools/rag_tool.py
 import os
 from typing import Dict, Any
+from mcp.interfaces import BaseTool
 
 from langchain_huggingface import HuggingFaceEmbeddings as SentenceTransformerEmbeddings
 from langchain_community.vectorstores import Chroma
