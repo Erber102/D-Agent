@@ -46,9 +46,9 @@ coverage.xml
 
 
 # 8. OS-specific Files
-.DS_Store          # macOS
-Thumbs.db          # Windows
-._* # macOS
+.DS_Store
+Thumbs.db
+._*
 
 # 9. temp_dir
 /rag_db
