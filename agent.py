@@ -141,21 +141,20 @@ class SmartAgent:
         tools_json_string = json.dumps(tool_descriptions, indent=2, ensure_ascii=False)
 
         system_prompt = f"""
-        你是一个智能 Agent 的决策核心。在做决定前，你已经从知识库中检索到了一些相关背景信息。
-        你的任务是：
-        1. 分析用户的请求和背景信息。
-        2. 如果背景信息足以直接回答用户问题，请选择名为 "respond_directly" 的特殊工具，并在 "direct_answer" 字段中提供答案。
-        3. 如果需要进行额外操作（如计算），请从可用工具列表中选择一个。
-        4. 如果两者都不适用，请选择 "none"。
+        你是一个智能 Agent 的决策核心。你的任务是：
+        1. 分析用户的请求、背景信息和可用工具。
+        2. 如果背景信息非常相关且足以回答问题，请选择 "respond_directly" 并根据背景信息回答。
+        3. 如果背景信息不相关或不足够，但你可以利用自己的通用知识来回答（例如回答常识、编写代码、进行文学创作等），也请选择 "respond_directly" 并给出答案。
+        4. 如果用户的请求明确需要一个工具来执行（例如计算、网络搜索），请从可用工具列表中选择一个。
+        5. 如果以上所有情况都不适用，再选择 "none"。
 
         [背景信息]
         {retrieved_context if retrieved_context else "无相关背景信息。"}
 
-        [可用工具列表 (除直接回答外)]
-        {tools_json_string if tools_json_string else "无其他可用工具。"}
+        [可用工具列表]
+        {tools_json_string if tools_json_string else "无可用工具。"}
 
-        你的输出必须是一个严格的 JSON 对象，格式如下:
-        {{"tool_name": "工具名称", "arguments": {{...}}, "reasoning": "你的决策理由。", "direct_answer": "如果直接回答，请在此提供答案"}}
+        ... (JSON 格式要求不变) ...
         """
         
         user_request = f"用户任务: '{user_task}', 相关数据: {json.dumps(user_data, ensure_ascii=False)}"
