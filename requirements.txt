@@ -9,3 +9,6 @@ chromadb
 dotenv
 unstructured
 langchain-huggingface
+requests
+beautifulsoup4
+google-search-results
