@@ -2,11 +2,12 @@ import os
 import importlib
 import inspect
 import json
-from typing import Dict, Optional
+from typing import Dict, Optional, Any
 
 from dotenv import load_dotenv
 from openai import OpenAI
 
+from memory import ConversationMemory
 from mcp.protocol import MCPMessage
 from mcp.interfaces import BaseTool
 # 导入 RAGTool 以便特殊处理
@@ -17,34 +18,45 @@ load_dotenv()
 class SmartAgent:
     def __init__(self, agent_id="smart_agent_001", tools_package_path="tools"):
         self.agent_id = agent_id
+        self.memory = ConversationMemory()
+
         provider = os.getenv("LLM_PROVIDER", "openai").lower() # 默认为 openai，并转为小写
 
+        api_key = None
+        base_url = None
+        
+        # 根据 provider 的值，从 .env 加载对应的配置
         if provider == "openai":
-            print("Initializing agent with OpenAI...")
             api_key = os.getenv("OPENAI_API_KEY")
-            if not api_key:
-                raise ValueError("LLM_PROVIDER is 'openai', but OPENAI_API_KEY is not set!")
-            
-            self.model_name = "gpt-4o" # 或者从 .env 读取
-            self.client = OpenAI(api_key=api_key)
-
+            self.model_name = os.getenv("OPENAI_MODEL_NAME", "gpt-4o")
+            # OpenAI 官方服务不需要 base_url
+        
         elif provider == "deepseek":
-            print("Initializing agent with DeepSeek...")
             api_key = os.getenv("DEEPSEEK_API_KEY")
-            if not api_key:
-                raise ValueError("LLM_PROVIDER is 'deepseek', but DEEPSEEK_API_KEY is not set!")
-
-            self.model_name = "deepseek-chat" # 或者从 .env 读取
-            self.client = OpenAI(
-                api_key=api_key,
-                base_url="https://api.deepseek.com"
-            )
+            self.model_name = os.getenv("DEEPSEEK_MODEL_NAME", "deepseek-chat")
+            base_url = "https://api.deepseek.com" # DeepSeek 的 URL 是固定的
             
+        elif provider == "custom":
+            api_key = os.getenv("CUSTOM_LLM_API_KEY")
+            self.model_name = os.getenv("CUSTOM_LLM_MODEL_NAME")
+            base_url = os.getenv("CUSTOM_LLM_BASE_URL") # 用户自己提供 URL
+            if not base_url:
+                raise ValueError("LLM_PROVIDER is 'custom', but CUSTOM_LLM_BASE_URL is not set!")
+        
         else:
-            # 如果用户在 .env 里写了不支持的 provider，就报错
-            raise ValueError(f"Unsupported LLM provider '{provider}' configured in .env file.")
+            raise ValueError(f"Unsupported LLM provider '{provider}'. Please check your .env file.")
 
-        print(f"Agent '{self.agent_id}' is online, powered by {provider.capitalize()} model '{self.model_name}'.")
+        if not api_key:
+            raise ValueError(f"API key for provider '{provider}' is not set in .env file.")
+        
+        # 3. 使用加载到的配置来初始化 OpenAI 客户端
+        # 无论用户选择哪个 provider，我们最终都用同一个 OpenAI 客户端对象
+        self.client = OpenAI(
+            api_key=api_key,
+            base_url=base_url # 如果是 OpenAI 官方，base_url 会是 None，客户端会自动处理
+        )
+        
+        print(f"Agent '{self.agent_id}' is online, powered by '{provider}' with model '{self.model_name}'.")
 
         # self.tools 现在只包含“可选工具”
         self.tools: Dict[str, BaseTool] = {}
@@ -76,137 +88,108 @@ class SmartAgent:
                 except Exception as e:
                     print(f"Error loading tool from {filename}: {e}")
 
-    def _generate_direct_answer(self, query: str) -> str:
-        """发起一个简单的、无工具约束的 LLM 调用来生成最终答案。"""
-        print(f"[{self.agent_id}] Generating final answer using general knowledge...")
-        try:
-            # 这里的 Prompt 非常简单
-            response = self.client.chat.completions.create(
-                model=self.model_name,
-                messages=[
-                    {"role": "system", "content": "You are a helpful assistant."},
-                    {"role": "user", "content": query}
-                ]
-            )
-            return response.choices[0].message.content
-        except Exception as e:
-            return f"生成答案时出错: {e}"
-
-    def handle_message(self, incoming_message: MCPMessage):
+    def _reason(self, goal: str, retrieved_context:str) -> Dict[str, Any]:
         """
-        核心流程：检索 -> 决策 -> 行动
+        ReAct 循环中的“思考”步骤。
+        这个方法将代替旧的 _decide_next_step。
         """
-        print(f"\n[{self.agent_id}] --- New Task Received ---")
-
-        # =======================================================
-        # 步骤 1: 准备用户的查询
-        # =======================================================
-        user_query = incoming_message.data.get("query", "")
-        if not user_query:
-            user_query = json.dumps(incoming_message.data)
-
-        # =======================================================
-        # 步骤 2: 检索 (在决策前执行！)
-        # =======================================================
-        retrieved_context = ""
-        if self.rag_tool:
-            print(f"[{self.agent_id}] Pre-processing: Automatically querying knowledge base...")
-            rag_result = self.rag_tool.execute(query=user_query)
-            if rag_result.get("status") == "success":
-                retrieved_context = rag_result.get("retrieved_context", "")
-                print(f"[{self.agent_id}] Retrieval finished. Context is ready.")
-            else:
-                print(f"[{self.agent_id}] Retrieval error: {rag_result.get('message')}")
-
-        # =======================================================
-        # 步骤 3: 决策 (带着检索到的上下文去思考)
-        # =======================================================
-        print(f"[{self.agent_id}] Thinking with context...")
-        decision = self._decide_next_step(incoming_message.task, incoming_message.data, retrieved_context)
-        
-        action = decision.get("action")
-        llm_thought = decision.get("reasoning", "No reasoning provided.")
-        print(f"[{self.agent_id}] LLM Router Decision: Action is '{action}'. Reason: '{llm_thought}'")
-
-        # =======================================================
-        # 步骤 4: 行动 (根据清晰的决策来执行)
-        # =======================================================
-        final_thought = f"Router thought: {llm_thought}"
-
-        if action == "use_tool":
-            chosen_tool_name = decision.get("tool_name")
-            arguments = decision.get("arguments", {})
-            if chosen_tool_name in self.tools:
-                response_data = self.tools[chosen_tool_name].execute(**arguments)
-            else:
-                response_data = {"status": "error", "message": f"Router decided to use tool '{chosen_tool_name}', but it was not found."}
-
-        elif action == "use_knowledge_base":
-            # 知识库有答案，需要发起第二次 LLM 调用来组织语言
-            final_query = f"Based on the following context:\n---\n{retrieved_context}\n---\nPlease provide a comprehensive answer to the user's question: {user_query}"
-            final_answer = self._generate_direct_answer(final_query)
-            response_data = {"status": "success", "result": final_answer}
-
-        elif action == "use_general_knowledge":
-            # 知识库没有答案，但可以用通用知识回答
-            final_answer = self._generate_direct_answer(user_query)
-            response_data = {"status": "success", "result": final_answer}
-            
-        else: # action == "cannot_answer" or any other case
-            response_data = {"status": "rejected", "result": "I've analyzed the request, but I cannot handle it with my current capabilities."}
-        
-        # =======================================================
-        # 步骤 5: 响应
-        # =======================================================
-        response_msg = MCPMessage(
-            sender_id=self.agent_id,
-            receiver_id=incoming_message.sender_id,
-            task=f"response_to:{incoming_message.task}",
-            data=response_data,
-            thought=final_thought
-        )
-        
-        print(f"[{self.agent_id}] --- Task Finished ---")
-        return response_msg
-
-    def _decide_next_step(self, user_task: str, user_data: dict, retrieved_context: str):
+        history = self.memory.format_for_prompt()
         tool_descriptions = [tool.get_mcp_description() for tool in self.tools.values()]
         tools_json_string = json.dumps(tool_descriptions, indent=2, ensure_ascii=False)
 
-        # 简化后的 Prompt，只做决策，不生成答案
         system_prompt = f"""
-        你是一个智能 Agent 的路由决策核心。你的任务是分析用户请求、背景信息和可用工具，然后决定下一步的行动路径。
+        你是一个自主代理，你的任务是完成用户的最终目标。
+        你会通过一个 "思考 -> 行动 -> 观察" 的循环来工作。
 
-        行动路径选项:
-        1. "use_knowledge_base": 如果背景信息非常相关且足以回答问题。
-        2. "use_general_knowledge": 如果背景信息不相关，但这是一个可以用通用知识回答的常识、编程或创意性问题。
-        3. "use_tool": 如果用户的请求明确需要一个工具来执行（例如计算）。
-        4. "cannot_answer": 如果以上都不适用。
+        在每一步，你都需要分析用户的最终目标和到目前为止的历史记录，然后决定下一步的行动。
+
+        [最终目标]
+        {goal}
+
+        [历史记录]
+        {history}
+
+        [可用工具]
+        {tools_json_string}
 
         [背景信息]
         {retrieved_context if retrieved_context else "无相关背景信息。"}
 
-        [可用工具列表]
-        {tools_json_string if tools_json_string else "无可用工具。"}
-
         你的输出必须是一个严格的 JSON 对象，格式如下:
         {{
-            "action": "你选择的行动路径",
-            "tool_name": "如果 action 是 'use_tool'，这里是工具名称",
-            "arguments": {{...}},
-            "reasoning": "你的决策理由。"
+            "thought": "你对当前情况的分析，以及下一步行动的计划。",
+            "action": "下一步要执行的工具名称。如果任务已完成，请使用 'finish'。",
+            "action_input": {{
+                "param1": "value1",
+                ...
+            }}
         }}
-        """
-        user_request = f"用户任务: '{user_task}', 相关数据: {json.dumps(user_data, ensure_ascii=False)}"
 
-        # 这里的 LLM 调用逻辑不变
+        - 如果你认为最终目标已经达成，请将 "action" 字段设置为 "finish"，并可以在 "thought" 字段中提供最终的总结性回答。
+        - 如果行动失败，请分析观察到的错误信息，并在下一步思考中尝试修复它。
+        """
+        
+        # 注意：这里的 user_prompt 留空，因为所有信息都在 system_prompt 里了
+        user_prompt = "Please proceed with the next step." 
+ 
         response = self.client.chat.completions.create(
             model=self.model_name,
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_request}
+                {"role": "user", "content": user_prompt}
             ],
             response_format={"type": "json_object"}
         )
         decision = json.loads(response.choices[0].message.content)
         return decision
+    
+    def run(self, goal: str):
+        """
+        执行 ReAct 循环来完成一个复杂的目标。
+        """
+        self.memory.clear()
+        self.memory.add_message("user", f"My goal is: {goal}")
+        
+        max_turns = 10 # 设置一个最大循环次数，防止无限循环
+        
+
+        for i in range(max_turns):
+            print(f"\n--- Turn {i+1}/{max_turns} ---")
+            
+            # 1. 思考 (Reason)
+            print("🤔 Thinking...")
+            
+            rag_result = self.rag_tool.execute(query=goal.data["query"]) 
+            retrieved_context = rag_result.get("retrieved_context", "")
+
+            # 把 context 作为参数传递给 _reason
+            decision = self._reason(goal, retrieved_context) 
+            thought = decision.get("thought", "No thought provided.")
+            action = decision.get("action")
+            action_input = decision.get("action_input", {})
+            print(f"Thought: {thought}")
+            self.memory.add_message("assistant", f"Thought: {thought}")
+
+            # 2. 检查是否完成
+            if action == "finish":
+                print("✅ Task Finished.")
+                self.memory.add_message("assistant", f"Final Answer: {thought}")
+                return thought
+
+            # 3. 行动 (Act)
+            if action in self.tools:
+                print(f"🎬 Acting: Using tool '{action}' with input {action_input}")
+                self.memory.add_message("assistant", f"Action: Using tool {action} with input {json.dumps(action_input)}")
+                
+                # 4. 观察 (Observe)
+                tool_result = self.tools[action].execute(**action_input)
+                observation = f"Tool {action} returned: {json.dumps(tool_result, ensure_ascii=False)}"
+                print(f"👀 Observation: {observation}")
+                self.memory.add_message("system", observation)
+            else:
+                observation = f"Error: Unknown action '{action}'. Available tools are: {list(self.tools.keys())}"
+                print(f"👀 Observation: {observation}")
+                self.memory.add_message("system", observation)
+
+        print("⚠️ Reached max turns. Stopping.")
+        return "The agent reached the maximum number of turns without finishing the task."

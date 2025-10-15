@@ -83,33 +83,9 @@ def start_interactive_mode(agent: SmartAgent):
                 task="user_query", 
                 data={"query": user_input}
             )
-            response = agent.handle_message(user_request)
-            
-            # 3. 最终判断问题是否解决
-            response_data = response.data
-            status = response_data.get("status")
-            
-            print("-" * 20)
-            if status == "success":
-                # 提取并展示 'result' 字段
-                result = response_data.get("result", "No result returned.")
-                print(f"✅ Problem Solved!")
-                print(f"🤖 Agent: {json.dumps(result, indent=2, ensure_ascii=False)}")
-            elif status == "rejected":
-                result = response_data.get("result", "Unknown reason.")
-                print(f"❌ Problem Not Solved.")
-                print(f"🤖 Agent: {result}")
-            elif status == "error":
-                message = response_data.get("message", "An unknown error occurred.")
-                print(f"💥 An Error Occurred.")
-                print(f"🤖 Agent: I encountered an error: {message}")
-            else:
-                print(f"❔ Unknown Status.")
-                print(f"🤖 Agent: I received an unusual response: {response_data}")
-
-            # 打印 Agent 的思考过程，这对于调试和理解非常有帮助
-            if response.thought:
-                print(f"   (Thought Process: {response.thought})")
+            final_result = agent.run(user_request)
+            print("\n--- Final Result ---")
+            print(f"🤖 Agent: {final_result}")
 
         except KeyboardInterrupt:
             print("\n👋 Agent shutting down. Goodbye!")
